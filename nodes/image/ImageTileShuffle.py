@@ -116,10 +116,96 @@ class WASImageTileShuffle:
         return (torch.cat(results, dim=0),)
 
 
+class WASImageTileExtract:
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE", {"tooltip": "Input images to split into 4 tiles (NHWC)."}),
+                "border_width": ("INT", {
+                    "default": 0,
+                    "min": 0,
+                    "max": 100,
+                    "step": 1,
+                    "tooltip": "Border width in pixels applied around each tile. The image content is resized to fit within the border."
+                }),
+                "border_color": ("STRING", {
+                    "default": "#FFFFFF",
+                    "tooltip": "Hex color for the tile border (e.g. #FFFFFF)."
+                }),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "IMAGE")
+    RETURN_NAMES = ("top_left", "top_right", "bottom_left", "bottom_right")
+
+    FUNCTION = "tile_extract"
+
+    CATEGORY = "image/transform"
+
+    def tile_extract(self, images, border_width, border_color):
+
+        # Parse border color from hex string
+        color_hex = border_color.strip().lstrip("#")
+        try:
+            cr = int(color_hex[0:2], 16)
+            cg = int(color_hex[2:4], 16)
+            cb = int(color_hex[4:6], 16)
+        except (ValueError, IndexError):
+            cr, cg, cb = 255, 255, 255
+        border_rgb = (cr, cg, cb)
+
+        out_tl, out_tr, out_bl, out_br = [], [], [], []
+
+        for image in images:
+            pil_img = tensor2pil(image)
+            w, h = pil_img.size
+
+            tile_w = w // 2
+            tile_h = h // 2
+
+            # Crop quadrants: top-left, top-right, bottom-left, bottom-right
+            quadrants = [
+                pil_img.crop((0, 0, tile_w, tile_h)),
+                pil_img.crop((tile_w, 0, tile_w * 2, tile_h)),
+                pil_img.crop((0, tile_h, tile_w, tile_h * 2)),
+                pil_img.crop((tile_w, tile_h, tile_w * 2, tile_h * 2)),
+            ]
+
+            results = []
+            for quad in quadrants:
+                if border_width > 0:
+                    inner_w = tile_w - border_width * 2
+                    inner_h = tile_h - border_width * 2
+                    resized = quad.resize((max(inner_w, 1), max(inner_h, 1)), Image.LANCZOS)
+                    canvas = Image.new("RGB", (tile_w, tile_h), border_rgb)
+                    canvas.paste(resized, (border_width, border_width))
+                    results.append(pil2tensor(canvas))
+                else:
+                    results.append(pil2tensor(quad))
+
+            out_tl.append(results[0])
+            out_tr.append(results[1])
+            out_bl.append(results[2])
+            out_br.append(results[3])
+
+        return (
+            torch.cat(out_tl, dim=0),
+            torch.cat(out_tr, dim=0),
+            torch.cat(out_bl, dim=0),
+            torch.cat(out_br, dim=0),
+        )
+
+
 NODE_CLASS_MAPPINGS = {
     "WASImageTileShuffle": WASImageTileShuffle,
+    "WASImageTileExtract": WASImageTileExtract,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "WASImageTileShuffle": "Image Tile Shuffle",
+    "WASImageTileExtract": "Image Tile Extract",
 }
